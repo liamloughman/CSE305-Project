@@ -1,6 +1,7 @@
 #include <iostream>
 #include <vector>
 #include <cmath>
+#include <Magick++.h>
 
 const double G = 6.67430e-11;
 
@@ -38,22 +39,46 @@ void updateForcesAndPositions(std::vector<Body>& bodies, double dt) {
     }
 }
 
+void drawFrame(const std::vector<Body>& bodies, int frameNumber) {
+    Magick::Image image(Magick::Geometry(800, 600), "black");
+    image.type(Magick::TrueColorType);
+    image.strokeColor("white");
+    image.fillColor("white");
+    for (const Body& body : bodies) {
+        double x = body.x / 1e9 + 400;
+        double y = body.y / 1e9 + 300;
+        image.draw(Magick::DrawableCircle(x, y, x + 2, y + 2));
+    }
+    image.write("frame" + std::to_string(frameNumber) + ".png");
+}
+
 int main() {
     
     std::vector<Body> bodies = {
-        {1e10, 0, 0, 0, 0}, // mass, x, y, vx, vy
-        {5e10, 1e5, 0, 0, -10}
+        {20e10, 0, 0, 0, 0}, // mass, x, y, vx, vy
+        {1e10, 5e10, 0, 0, 0}
     };
 
-    double dt = 1;  // time step 
-    int steps = 3;  // total number of steps
+    double dt = 1e7;  // time step in seconds
+    int steps = 200;  // total number of steps
 
+    std::vector<std::string> frameFiles;
     for (int step = 0; step < steps; ++step) {
         updateForcesAndPositions(bodies, dt);
-        std::cout << "Step " << step << ":\n";
-        for (const Body& body : bodies) {
-            std::cout << "Body at (" << body.x << ", " << body.y << ")\n";
-        }
+        drawFrame(bodies, step);
+        frameFiles.push_back("frame" + std::to_string(step) + ".png");
+    }
+
+    std::vector<Magick::Image> frames;
+    for (const auto& frameFile : frameFiles) {
+        Magick::Image frame(frameFile);
+        frame.animationDelay(2);
+        frames.push_back(Magick::Image(frameFile));
+    }
+    Magick::writeImages(frames.begin(), frames.end(), "simulation.gif");
+    
+    for (const auto& frameFile : frameFiles) {
+        remove(frameFile.c_str());
     }
     return 0;
 }
