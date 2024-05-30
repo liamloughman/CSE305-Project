@@ -94,20 +94,31 @@ void Step_Parallel(std::vector<Body>& bodies, double dt) {
     }
 }
 
-void drawFrame(const std::vector<Body>& bodies, int frameNumber) {
+Magick::Image drawFrame(const std::vector<Body>& bodies) {
     Magick::Image image(Magick::Geometry(800, 600), "black");
     image.type(Magick::TrueColorType);
     image.strokeColor("white");
     image.fillColor("white");
+
     for (const Body& body : bodies) {
         double x = body.x / 1e9 + 400;
         double y = body.y / 1e9 + 300;
         image.draw(Magick::DrawableCircle(x, y, x + 2, y + 2));
     }
-    image.write("frame" + std::to_string(frameNumber) + ".png");
+    return image;
 }
 
-int main() {
+int main(int argc, char *argv[]) {
+    if (argc < 2) {
+        std::cerr << "Usage: " << argv[0] << " <1 for Seq, 2 for Step_Parallel>" << std::endl;
+        return 1;
+    }
+
+    int algo = std::atoi(argv[1]);
+    if (algo != 1 && algo != 2) {
+        std::cerr << "Invalid option. Use 1 for Seq, 2 for Step_Parallel." << std::endl;
+        return 1;
+    }
     
     std::vector<Body> bodies = {
         {1e25, 0, 0, 0, 0}, // mass, x, y, vx, vy
@@ -117,23 +128,20 @@ int main() {
     double dt = 5e7;  // time step in seconds
     int steps = 200;  // total number of steps
 
-    std::vector<std::string> frameFiles;
+    std::vector<Magick::Image> frames;
     for (int step = 0; step < steps; ++step) {
-        // Seq(bodies, dt);
-        Step_Parallel(bodies, dt);
-        drawFrame(bodies, step);
-        frameFiles.push_back("frame" + std::to_string(step) + ".png");
+        if (algo == 1) {
+            Seq(bodies, dt);
+        } else if (algo == 2){
+            Step_Parallel(bodies, dt);
+        }
+        frames.push_back(drawFrame(bodies));
     }
 
-    std::vector<Magick::Image> frames;
-    for (const auto& frameFile : frameFiles) {
-        Magick::Image frame(frameFile);
-        frames.push_back(Magick::Image(frameFile));
+    for (auto& frame : frames) {
+        frame.animationDelay(2);
     }
     Magick::writeImages(frames.begin(), frames.end(), "simulation.gif");
-    
-    for (const auto& frameFile : frameFiles) {
-        remove(frameFile.c_str());
-    }
+
     return 0;
 }

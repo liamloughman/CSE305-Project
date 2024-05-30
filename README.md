@@ -37,5 +37,7 @@ g++ -std=c++11 -o main main.cpp -I<found_include_path> -L$HOME/ImageMagick/lib -
 Finally, execute the compiled program:
 
 ```bash
-./main
+./main <algrithm_number>
 ```
+
+where `<algrithm_number>` is set to 1 for non parallelized sequential computation and 2 for parallelized update steps.
