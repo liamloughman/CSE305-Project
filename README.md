@@ -1,31 +1,41 @@
 # CSE305 - Project
 
-To run the code you must run the following commands:
+## Steps to Set Up and Compile the Project
 
-`tar -xzvf ImageMagick.tar.gz`
+### Step 1: Extract the ImageMagick Library
 
-`cd ImageMagick-7.*`
+```bash
+tar -xzvf ImageMagick.tar.gz
+```
 
-`./configure --prefix=$HOME/ImageMagick`
+### Step 2: Build and Set Up the Library
 
-`make`
+```bash
+make
+```
 
-`make install`
+At this stage, the library has been built and set up, ready to use.
 
-`export PATH=$HOME/ImageMagick/bin:$PATH`
+### Step 3: Find the Include Path
 
-`export PKG_CONFIG_PATH=$HOME/ImageMagick/lib/pkgconfig:$PKG_CONFIG_PATH`
+To compile the project, you need to locate the `Magick++.h` header file. Run the following command to find the include path:
 
-`export LD_LIBRARY_PATH=$HOME/ImageMagick/lib:$LD_LIBRARY_PATH`
+```bash
+find $HOME/ImageMagick -name "Magick++.h"
+```
 
-and then run
+Copy the result of this command, which is the path to `Magick++.h`.
 
-`find $HOME/ImageMagick -name "Magick++.h"`
+### Step 4: Compile and Run the Project
 
-copy the result in `<found_include_path>`:
+Use the path found from the previous step and replace it with `<found_include_path>` in the command below. This command compiles the `main.cpp` file with the necessary include and library paths:
 
-`g++ -std=c++11 -o main main.cpp -I<found_include_path> -L$HOME/ImageMagick/lib -lMagick++-7.Q16HDRI -lMagickCore-7.Q16HDRI -lMagickWand-7.Q16HDRI`
+```bash
+g++ -std=c++11 -o main main.cpp -I<found_include_path> -L$HOME/ImageMagick/lib -lMagick++-7.Q16HDRI -lMagickCore-7.Q16HDRI -lMagickWand-7.Q16HDRI
+```
 
-and then
+Finally, execute the compiled program:
 
-`./main`
+```bash
+./main
+```
