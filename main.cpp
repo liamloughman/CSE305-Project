@@ -3,6 +3,7 @@
 #include <cmath>
 #include <Magick++.h>
 #include <thread>
+#include <mutex>
 
 const double G = 6.67430e-11;
 
@@ -11,6 +12,9 @@ struct Body {
     double x, y;
     double vx, vy;
 };
+
+
+std::mutex mutex;
 
 void updateForces(std::vector<Body>& bodies, std::vector<double>& fx, std::vector<double>& fy) {
     int n = bodies.size();
@@ -46,7 +50,7 @@ void Seq(std::vector<Body>& bodies, double dt) {
     }
 }
 
-void updateVelocities(std::vector<Body>& bodies, double dt, std::vector<double> fx, std::vector<double> fy, int start, int end) {
+void updateVelocities(std::vector<Body>& bodies, double dt, std::vector<double>& fx, std::vector<double>& fy, int start, int end) {
     for (int i = start; i < end; ++i) {
         bodies[i].vx += fx[i] / bodies[i].mass * dt;
         bodies[i].vy += fy[i] / bodies[i].mass * dt;
@@ -94,6 +98,68 @@ void Step_Parallel(std::vector<Body>& bodies, double dt) {
     }
 }
 
+void updateForcesParallel(std::vector<Body>& bodies, std::vector<double>& fx, std::vector<double>& fy, int start, int end) {
+    int n = bodies.size();
+    for (int i = start; i < end; ++i) {
+        for (int j = 0; j < n; ++j) {
+            if (i != j) {
+                double dx = bodies[j].x - bodies[i].x;
+                double dy = bodies[j].y - bodies[i].y;
+                double distSq = dx * dx + dy * dy;
+                double dist = std::sqrt(distSq);
+                double force = G * bodies[i].mass * bodies[j].mass / distSq;
+                double fx_i = force * dx / dist;
+                double fy_i = force * dy / dist;
+
+                mutex.lock();
+                fx[i] += fx_i;
+                fy[i] += fy_i;
+                fx[j] -= fx_i;
+                fy[j] -= fy_i;
+                mutex.unlock();
+            }
+        }
+    }
+}
+
+void ForcesParallel(std::vector<Body>& bodies, double dt) {
+    int numThreads = std::thread::hardware_concurrency();
+    int n = bodies.size();
+    std::vector<double> fx(n, 0), fy(n, 0);
+
+    std::vector<std::thread> threads;
+
+    for (int i = 0; i < numThreads; ++i) {
+        int start = i * n / numThreads;
+        int end = (i + 1) * n / numThreads;
+        threads.push_back(std::thread(updateForcesParallel, std::ref(bodies), std::ref(fx), std::ref(fy), start, end));
+    }
+    for (auto& thread : threads) {
+        thread.join();
+    }
+    threads.clear();
+
+    for (int i = 0; i < numThreads; ++i) {
+        int start = i * n / numThreads;
+        int end = (i + 1) * n / numThreads;
+        threads.push_back(std::thread(updateVelocities, std::ref(bodies), dt, std::ref(fx), std::ref(fy), start, end));
+    }
+    for (auto& thread : threads) {
+        thread.join();
+    }
+    threads.clear();
+
+    for (int i = 0; i < numThreads; ++i) {
+        int start = i * n / numThreads;
+        int end = (i + 1) * n / numThreads;
+        threads.push_back(std::thread(updatePositions, std::ref(bodies), dt, start, end));
+    }
+    for (auto& thread : threads) {
+        thread.join();
+    }
+    threads.clear();
+}
+
 Magick::Image drawFrame(const std::vector<Body>& bodies) {
     Magick::Image image(Magick::Geometry(800, 600), "black");
     image.type(Magick::TrueColorType);
@@ -115,7 +181,7 @@ int main(int argc, char *argv[]) {
     }
 
     int algo = std::atoi(argv[1]);
-    if (algo != 1 && algo != 2) {
+    if (algo != 1 && algo != 2 && algo != 3) {
         std::cerr << "Invalid option. Use 1 for Seq, 2 for Step_Parallel." << std::endl;
         return 1;
     }
@@ -125,8 +191,8 @@ int main(int argc, char *argv[]) {
         {5e2, 5e10, 0, -150, 80}
     };
 
-    double dt = 5e7;  // time step in seconds
-    int steps = 200;  // total number of steps
+    double dt = 1e7;  // time step in seconds
+    int steps = 400;  // total number of steps
 
     std::vector<Magick::Image> frames;
     for (int step = 0; step < steps; ++step) {
@@ -134,6 +200,9 @@ int main(int argc, char *argv[]) {
             Seq(bodies, dt);
         } else if (algo == 2){
             Step_Parallel(bodies, dt);
+        }
+        else if (algo == 3) {
+            ForcesParallel(bodies, dt);
         }
         frames.push_back(drawFrame(bodies));
     }
