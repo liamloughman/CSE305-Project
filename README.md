@@ -40,4 +40,4 @@ Finally, execute the compiled program:
 ./main <algrithm_number>
 ```
 
-where `<algrithm_number>` is set to 1 for non parallelized sequential computation and 2 for parallelized update steps.
+where `<algrithm_number>` is set to 1 for sequential_simulation, 2 for parallel_step_simulation, 3 for parallel_distinc_simulation, 4 for parallel_combined_simulation steps.
