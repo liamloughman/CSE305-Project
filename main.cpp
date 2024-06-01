@@ -228,6 +228,22 @@ Magick::Image drawFrame(const std::vector<Body>& bodies) {
     return image;
 }
 
+std::vector<Body> generate_random_bodies(int N) {
+    std::vector<Body> bodies;
+    bodies.reserve(N);
+    std::srand(std::time(nullptr));
+
+    for (int i = 0; i < N; ++i) {
+        double mass = 1e2 + static_cast<double>(std::rand()) / (static_cast<double>(RAND_MAX / (1e24 - 1e2)));
+        double x = -5e10 + static_cast<double>(std::rand()) / (static_cast<double>(RAND_MAX / (5e10 - (-5e10))));
+        double y = -5e10 + static_cast<double>(std::rand()) / (static_cast<double>(RAND_MAX / (5e10 - (-5e10))));
+        double vx = -100 + static_cast<double>(std::rand()) / (static_cast<double>(RAND_MAX / (100 - (-100))));
+        double vy = -100 + static_cast<double>(std::rand()) / (static_cast<double>(RAND_MAX / (100 - (-100))));
+        bodies.push_back({mass, x, y, vx, vy});
+    }
+    return bodies;
+}
+
 int main(int argc, char *argv[]) {
     if (argc != 2) {
         std::cerr << "Usage: " << argv[0] << " <1 for sequential_simulation, 2 for parallel_step_simulation, 3 for parallel_distinc_simulation, 4 for parallel_combined_simulation>" << std::endl;
@@ -240,16 +256,21 @@ int main(int argc, char *argv[]) {
         return 1;
     }
     
-    std::vector<Body> bodies = {
+    /*std::vector<Body> bodies = {
         {1e24, 0, 0, 0, 0}, // mass, x, y, vx, vy
         {1e2, 5e10, 1e10, -70, 60},
         {1e2, -5e10, 5e10, 10, -20}
-    };
+    };*/
 
     double dt = 1e7;  // time step in seconds
     int steps = 200;  // total number of steps
 
     std::vector<Magick::Image> frames;
+
+    int N = 10000;
+    std::vector<Body> bodies = generate_random_bodies(N);
+
+    auto start_total = std::chrono::high_resolution_clock::now();
     for (int step = 0; step < steps; ++step) {
         if (algo == 1) {
             sequential_simulation(bodies, dt);
@@ -264,6 +285,10 @@ int main(int argc, char *argv[]) {
         }
         frames.push_back(drawFrame(bodies));
     }
+    
+    auto end_total = std::chrono::high_resolution_clock::now();
+    std::chrono::duration<double> total_duration = end_total - start_total;
+    std::cout << "Total simulation time: " << total_duration.count() << " seconds." << std::endl;
 
     for (auto& frame : frames) {
         frame.animationDelay(2);
