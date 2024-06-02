@@ -40,4 +40,4 @@ Finally, execute the compiled program:
 ./main <algrithm_number>
 ```
 
-where `<algrithm_number>` is set to 1 for sequential_simulation, 2 for parallel_step_simulation, 3 for parallel_distinc_simulation, 4 for parallel_combined_simulation steps.
+where `<algrithm_number>` is set to 0 to test the performance of all functions (data saved in .json, run `python plot.py` to get the graph), 1 for sequential_simulation, 2 for parallel_step_simulation, 3 for parallel_distinc_simulation, 4 for parallel_combined_simulation steps, 5 for barnes_hutt_simulation.

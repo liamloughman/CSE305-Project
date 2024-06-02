@@ -4,6 +4,7 @@
 #include <Magick++.h>
 #include <thread>
 #include <mutex>
+#include "json.hpp"
 #include <fstream>
 
 const double G = 6.67430e-11;
@@ -392,51 +393,92 @@ int main(int argc, char *argv[]) {
         return 1;
     }
 
-    std::vector<Body> bodies = {
-        {1e24, 0, 0, 0, 0}, // mass, x, y, vx, vy
-        {1e2, 5e10, 1e10, -70, 60},
-        {1e2, -5e10, 5e10, 10, -20},
-        {1e1, -5e10, -5e10, 20, 20}
+    if (algo == 0) {
+        int N = 1000;
+        double dt = 1e7;  // time step in seconds
+        int steps = 1;  // total number of steps
+        std::vector<Body> bodies = generate_random_bodies(N);
+        nlohmann::json results = nlohmann::json::array();
+        for (int numThreads = 1; numThreads <= std::thread::hardware_concurrency(); ++numThreads) {
+            for (int algoTest = 1; algoTest <= 5; ++algoTest) {
+                std::vector<Body> bodiesCopy = bodies;
+                auto start_total = std::chrono::high_resolution_clock::now();
+                for (int step = 0; step < steps; ++step) {
+                    if (algoTest == 1) {
+                        sequential_simulation(bodiesCopy, dt);
+                    } else if (algoTest == 2) {
+                        parallel_step_simulation(bodiesCopy, dt, numThreads);
+                    } else if (algoTest == 3) {
+                        parallel_distinc_simulation(bodiesCopy, dt, numThreads);
+                    } else if (algoTest == 4) {
+                        parallel_combined_simulation(bodiesCopy, dt, numThreads);
+                    }
+                    else if (algo == 5) {
+                        barnes_hutt_simulation(bodiesCopy, dt);
+                    }
+                }
+                auto end_total = std::chrono::high_resolution_clock::now();
+                std::chrono::duration<double> total_duration = end_total - start_total;
 
-    };
-
-    double dt = 1e7;  // time step in seconds
-    int steps = 200;  // total number of steps
-    
-    int numThreads = std::thread::hardware_concurrency();
-
-    std::vector<Magick::Image> frames;
-
-    int N = 100;
-    //std::vector<Body> bodies = generate_random_bodies(N);
-
-    auto start_total = std::chrono::high_resolution_clock::now();
-    for (int step = 0; step < steps; ++step) {
-        if (algo == 1) {
-            sequential_simulation(bodies, dt);
-        } else if (algo == 2){
-            parallel_step_simulation(bodies, dt, numThreads);
+                nlohmann::json result;
+                result["algorithm"] = algoTest;
+                result["threads"] = numThreads;
+                result["time"] = total_duration.count();
+                results.push_back(result);
+            }
         }
-        else if (algo == 3) {
-            parallel_distinc_simulation(bodies, dt, numThreads);
-        }
-        else if (algo == 4) {
-            parallel_combined_simulation(bodies, dt, numThreads);
-        }
-        else if (algo == 5) {
-            barnes_hutt_simulation(bodies, dt);
-        }
-        frames.push_back(drawFrame(bodies));
+        std::string filename = "results" + std::to_string(N) + ".json";
+        std::ofstream file(filename);
+        file << results;
+        file.close();
+
+        return 0;
+
     }
-    
-    auto end_total = std::chrono::high_resolution_clock::now();
-    std::chrono::duration<double> total_duration = end_total - start_total;
-    std::cout << "Total simulation time: " << total_duration.count() << " seconds." << std::endl;
+    else{
+        // std::vector<Body> bodies = {
+        //     {1e24, 0, 0, 0, 0}, // mass, x, y, vx, vy
+        //     {1e2, 5e10, 1e10, -70, 60},
+        //     {1e2, -5e10, 5e10, 10, -20}
+        // };
 
-    for (auto& frame : frames) {
-        frame.animationDelay(2);
+        std::vector<Body> bodies = generate_random_bodies(1);
+
+        double dt = 1e7;  // time step in seconds
+        int steps = 200;  // total number of steps
+
+        int numThreads = std::thread::hardware_concurrency();
+
+        std::vector<Magick::Image> frames;
+
+        auto start_total = std::chrono::high_resolution_clock::now();
+        for (int step = 0; step < steps; ++step) {
+            if (algo == 1) {
+                sequential_simulation(bodies, dt);
+            } else if (algo == 2){
+                parallel_step_simulation(bodies, dt, numThreads);
+            }
+            else if (algo == 3) {
+                parallel_distinc_simulation(bodies, dt, numThreads);
+            }
+            else if (algo == 4) {
+                parallel_combined_simulation(bodies, dt, numThreads);
+            }
+            else if (algo == 5) {
+                barnes_hutt_simulation(bodies, dt);
+            }
+            frames.push_back(drawFrame(bodies));
+        }
+        
+        auto end_total = std::chrono::high_resolution_clock::now();
+        std::chrono::duration<double> total_duration = end_total - start_total;
+        std::cout << "Total simulation time: " << total_duration.count() << " seconds." << std::endl;
+
+        for (auto& frame : frames) {
+            frame.animationDelay(2);
+        }
+        Magick::writeImages(frames.begin(), frames.end(), "simulation.gif");
+
+        return 0;
     }
-    Magick::writeImages(frames.begin(), frames.end(), "simulation.gif");
-
-    return 0;
 }
