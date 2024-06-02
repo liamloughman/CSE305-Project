@@ -4,14 +4,18 @@
 #include <Magick++.h>
 #include <thread>
 #include <mutex>
+#include <fstream>
 
 const double G = 6.67430e-11;
+const double THETA = 0.5;
 
 struct Body {
     double mass;
     double x, y;
     double vx, vy;
 };
+
+//--------------------------------SEQUENTIAL------------------------------------------------------
 
 std::mutex mutex;
 
@@ -51,6 +55,8 @@ void sequential_simulation(std::vector<Body>& bodies, double dt) {
     }
 }
 
+//--------------------------------PARALLEL------------------------------------------------------
+
 void compute_velocities(std::vector<Body>& bodies, double dt, std::vector<double>& fx, std::vector<double>& fy, int start, int end) {
     for (int i = start; i < end; ++i) {
         bodies[i].vx += fx[i] / bodies[i].mass * dt;
@@ -65,12 +71,11 @@ void compute_positions(std::vector<Body>& bodies, double dt, int start, int end)
     }
 }
 
-void parallel_step_simulation(std::vector<Body>& bodies, double dt) {
+void parallel_step_simulation(std::vector<Body>& bodies, double dt, int numThreads) {
     int n = bodies.size();
     std::vector<double> fx(n, 0), fy(n, 0);
     compute_forces(bodies, fx, fy);
 
-    int numThreads = std::thread::hardware_concurrency();
     int blockSize = n / numThreads;
     int remainder = n % numThreads;
 
@@ -99,7 +104,7 @@ void parallel_step_simulation(std::vector<Body>& bodies, double dt) {
     }
 }
 
-void parallel_distinc_aux(std::vector<Body>& bodies, std::vector<double>& fx, std::vector<double>& fy, int start, int end) {
+void compute_forces_parallel(std::vector<Body>& bodies, std::vector<double>& fx, std::vector<double>& fy, int start, int end) {
     int n = bodies.size();
     for (int i = start; i < end; ++i) {
         fx[i] = 0;
@@ -125,8 +130,7 @@ void parallel_distinc_aux(std::vector<Body>& bodies, std::vector<double>& fx, st
     }
 }
 
-void parallel_distinc_simulation(std::vector<Body>& bodies, double dt) {
-    int numThreads = std::thread::hardware_concurrency();
+void parallel_distinc_simulation(std::vector<Body>& bodies, double dt, int numThreads) {
     int n = bodies.size();
     std::vector<double> fx(n, 0), fy(n, 0);
 
@@ -135,7 +139,7 @@ void parallel_distinc_simulation(std::vector<Body>& bodies, double dt) {
     for (int i = 0; i < numThreads; ++i) {
         int start = i * n / numThreads;
         int end = (i + 1) * n / numThreads;
-        threads.push_back(std::thread(parallel_distinc_aux, std::ref(bodies), std::ref(fx), std::ref(fy), start, end));
+        threads.push_back(std::thread(compute_forces_parallel, std::ref(bodies), std::ref(fx), std::ref(fy), start, end));
     }
     for (auto& thread : threads) {
         thread.join();
@@ -188,8 +192,7 @@ void parallel_combined_aux(std::vector<Body>& bodies, std::vector<Body>& curr, s
     }
 }
 
-void parallel_combined_simulation(std::vector<Body>& bodies, double dt) {
-    size_t numThreads = std::thread::hardware_concurrency();
+void parallel_combined_simulation(std::vector<Body>& bodies, double dt, int numThreads) {
     size_t n = bodies.size();
     std::vector<std::thread> threads(numThreads);
     std::vector<Body> tmp_bodies(n), curr = bodies, next = tmp_bodies;
@@ -228,12 +231,145 @@ Magick::Image drawFrame(const std::vector<Body>& bodies) {
     return image;
 }
 
+//--------------------------------BARNES-HUTT------------------------------------------------------
+
+struct QuadNode {
+    double mass;
+    double centerX, centerY;
+    double minX, minY, maxX, maxY;
+    Body* body;
+    QuadNode* NW;
+    QuadNode* NE;
+    QuadNode* SW;
+    QuadNode* SE;
+
+    QuadNode(double minX, double minY, double maxX, double maxY)
+        : mass(0), centerX(0), centerY(0), minX(minX), minY(minY), maxX(maxX), maxY(maxY),
+          body(nullptr), NW(nullptr), NE(nullptr), SW(nullptr), SE(nullptr) {}
+
+    ~QuadNode() {
+        delete NW;
+        delete NE;
+        delete SW;
+        delete SE;
+    }
+
+    bool isLeaf() const {
+        return !NW && !NE && !SW && !SE;
+    }
+
+    void insert(Body* b);
+    void computeMassDistribution();
+    void computeForce(Body* b, double& fx, double& fy);
+};
+
+void QuadNode::insert(Body* b) {
+    if (!body && isLeaf()) {
+        body = b;
+        centerX = b->x;
+        centerY = b->y;
+        mass = b->mass;
+        return;
+    }
+    if (isLeaf()) {
+        NW = new QuadNode(minX, (minY + maxY) / 2, (minX + maxX) / 2, maxY);
+        NE = new QuadNode((minX + maxX) / 2, (minY + maxY) / 2, maxX, maxY);
+        SW = new QuadNode(minX, minY, (minX + maxX) / 2, (minY + maxY) / 2);
+        SE = new QuadNode((minX + maxX) / 2, minY, maxX, (minY + maxY) / 2);
+        if (body) {
+            if (body->x <= (minX + maxX) / 2) {
+                if (body->y <= (minY + maxY) / 2) {
+                    SW->insert(body);
+                } else {
+                    NW->insert(body);
+                }
+            } else {
+                if (body->y <= (minY + maxY) / 2) {
+                    SE->insert(body);
+                } else {
+                    NE->insert(body);
+                }
+            }
+            body = nullptr;
+        }
+    }
+    if (b->x <= (minX + maxX) / 2) {
+        if (b->y <= (minY + maxY) / 2) {
+            SW->insert(b);
+        } else {
+            NW->insert(b);
+        }
+    } else {
+        if (b->y <= (minY + maxY) / 2) {
+            SE->insert(b);
+        } else {
+            NE->insert(b);
+        }
+    }
+    if (b->x == centerX && b->y == centerY) {
+        b->x += ((std::rand() % 100) - 50) * 1e-9;
+        b->y += ((std::rand() % 100) - 50) * 1e-9;
+    }
+}
+
+void QuadNode::computeMassDistribution() {
+    if (isLeaf()) {
+        return;
+    }
+    NW->computeMassDistribution();
+    NE->computeMassDistribution();
+    SW->computeMassDistribution();
+    SE->computeMassDistribution();
+    mass = NW->mass + NE->mass + SW->mass + SE->mass;
+    centerX = (NW->centerX * NW->mass + NE->centerX * NE->mass + SW->centerX * SW->mass + SE->centerX * SE->mass) / mass;
+    centerY = (NW->centerY * NW->mass + NE->centerY * NE->mass + SW->centerY * SW->mass + SE->centerY * SE->mass) / mass;
+}
+
+void QuadNode::computeForce(Body* b, double& fx, double& fy) {
+    if (isLeaf() && body == b) {
+        return;
+    }
+    double dx = centerX - b->x;
+    double dy = centerY - b->y;
+    double distSq = std::max(dx * dx + dy * dy, 1e-6);
+    double dist = std::sqrt(distSq);  
+    if ((maxX - minX) / dist < THETA || isLeaf()) {
+        double force = G * mass * b->mass / distSq;
+        fx += force * dx / dist;
+        fy += force * dy / dist;
+        return;
+    }
+    if (NW) NW->computeForce(b, fx, fy);
+    if (NE) NE->computeForce(b, fx, fy);
+    if (SW) SW->computeForce(b, fx, fy);
+    if (SE) SE->computeForce(b, fx, fy);
+}
+
+void barnes_hutt_simulation(std::vector<Body>& bodies, double dt) {
+    double minX = -1e12, minY = -1e12, maxX = 1e12, maxY = 1e12;
+    QuadNode root(minX, minY, maxX, maxY);
+    for (auto& body : bodies) {
+        root.insert(&body);
+    }
+    root.computeMassDistribution();
+    for (auto& body : bodies) {
+        double fx = 0, fy = 0;
+        root.computeForce(&body, fx, fy);
+        body.vx += fx / body.mass * dt;
+        body.vy += fy / body.mass * dt;
+    }
+    for (auto& body : bodies) {
+        body.x += body.vx * dt;
+        body.y += body.vy * dt;
+    }
+}
+
 std::vector<Body> generate_random_bodies(int N) {
     std::vector<Body> bodies;
     bodies.reserve(N);
     std::srand(std::time(nullptr));
-
-    for (int i = 0; i < N; ++i) {
+    bodies.push_back({1e24, 0, 0, 0, 0}); // central massive body
+    for (int i = 1; i < N; ++i) {
         double mass = 1e2 + static_cast<double>(std::rand()) / (static_cast<double>(RAND_MAX / (1e24 - 1e2)));
         double x = -5e10 + static_cast<double>(std::rand()) / (static_cast<double>(RAND_MAX / (5e10 - (-5e10))));
         double y = -5e10 + static_cast<double>(std::rand()) / (static_cast<double>(RAND_MAX / (5e10 - (-5e10))));
@@ -246,42 +382,49 @@ std::vector<Body> generate_random_bodies(int N) {
 
 int main(int argc, char *argv[]) {
     if (argc != 2) {
-        std::cerr << "Usage: " << argv[0] << " <1 for sequential_simulation, 2 for parallel_step_simulation, 3 for parallel_distinc_simulation, 4 for parallel_combined_simulation>" << std::endl;
+        std::cerr << "Usage: " << argv[0] << " <1 for sequential_simulation, 2 for parallel_step_simulation, 3 for parallel_distinc_simulation, 4 for parallel_combined_simulation, >" << std::endl;
         return 1;
     }
 
     int algo = std::atoi(argv[1]);
-    if (algo != 1 && algo != 2 && algo != 3 && algo != 4) {
-        std::cerr << "Invalid option. Use 1 for sequential_simulation, 2 for parallel_step_simulation, 3 for parallel_distinc_simulation, 4 for parallel_combined_simulation." << std::endl;
+    if (algo != 0 && algo != 1 && algo != 2 && algo != 3 && algo != 4 && algo != 5) {
+        std::cerr << "Invalid option. Use 1 for sequential_simulation, 2 for parallel_step_simulation, 3 for parallel_distinc_simulation, 4 for parallel_combined_simulation, 5 for barnes_hutt_simulation." << std::endl;
         return 1;
     }
-    
-    /*std::vector<Body> bodies = {
+
+    std::vector<Body> bodies = {
         {1e24, 0, 0, 0, 0}, // mass, x, y, vx, vy
         {1e2, 5e10, 1e10, -70, 60},
-        {1e2, -5e10, 5e10, 10, -20}
-    };*/
+        {1e2, -5e10, 5e10, 10, -20},
+        {1e1, -5e10, -5e10, 20, 20}
+
+    };
 
     double dt = 1e7;  // time step in seconds
     int steps = 200;  // total number of steps
+    
+    int numThreads = std::thread::hardware_concurrency();
 
     std::vector<Magick::Image> frames;
 
-    int N = 10000;
-    std::vector<Body> bodies = generate_random_bodies(N);
+    int N = 100;
+    //std::vector<Body> bodies = generate_random_bodies(N);
 
     auto start_total = std::chrono::high_resolution_clock::now();
     for (int step = 0; step < steps; ++step) {
         if (algo == 1) {
             sequential_simulation(bodies, dt);
         } else if (algo == 2){
-            parallel_step_simulation(bodies, dt);
+            parallel_step_simulation(bodies, dt, numThreads);
         }
         else if (algo == 3) {
-            parallel_distinc_simulation(bodies, dt);
+            parallel_distinc_simulation(bodies, dt, numThreads);
         }
         else if (algo == 4) {
-            parallel_combined_simulation(bodies, dt);
+            parallel_combined_simulation(bodies, dt, numThreads);
+        }
+        else if (algo == 5) {
+            barnes_hutt_simulation(bodies, dt);
         }
         frames.push_back(drawFrame(bodies));
     }
