@@ -6,6 +6,9 @@
 #include <mutex>
 #include "json.hpp"
 #include <fstream>
+#include <sstream>
+#include <random>
+#include <ctime>
 
 const double G = 6.67430e-11;
 const double THETA = 0.5;
@@ -14,6 +17,8 @@ struct Body {
     double mass;
     double x, y;
     double vx, vy;
+    std::string color;
+    double radius;
 };
 
 //--------------------------------SEQUENTIAL------------------------------------------------------
@@ -218,19 +223,7 @@ void parallel_combined_simulation(std::vector<Body>& bodies, double dt, int numT
     }
 }
 
-Magick::Image drawFrame(const std::vector<Body>& bodies) {
-    Magick::Image image(Magick::Geometry(800, 600), "black");
-    image.type(Magick::TrueColorType);
-    image.strokeColor("white");
-    image.fillColor("white");
 
-    for (const Body& body : bodies) {
-        double x = body.x / 1e9 + 400;
-        double y = body.y / 1e9 + 300;
-        image.draw(Magick::DrawableCircle(x, y, x + 2, y + 2));
-    }
-    return image;
-}
 
 //--------------------------------BARNES-HUTT------------------------------------------------------
 
@@ -346,12 +339,7 @@ void QuadNode::computeForce(Body* b, double& fx, double& fy) {
     if (SE) SE->computeForce(b, fx, fy);
 }
 
-void barnes_hutt_simulation(std::vector<Body>& bodies, double dt) {
-    double minX = -1e12, minY = -1e12, maxX = 1e12, maxY = 1e12;
-    QuadNode root(minX, minY, maxX, maxY);
-    for (auto& body : bodies) {
-        root.insert(&body);
-    }
+void barnes_hutt_simulation(std::vector<Body>& bodies, QuadNode& root, double dt) {
     root.computeMassDistribution();
     for (auto& body : bodies) {
         double fx = 0, fy = 0;
@@ -365,20 +353,48 @@ void barnes_hutt_simulation(std::vector<Body>& bodies, double dt) {
     }
 }
 
+std::string generate_random_color() {
+    std::ostringstream color;
+    color << "#";
+    for (int i = 0; i < 6; ++i) {
+        int value = std::rand() % 16;
+        color << std::hex << value;
+    }
+    return color.str();
+}
+
 std::vector<Body> generate_random_bodies(int N) {
     std::vector<Body> bodies;
     bodies.reserve(N);
-    std::srand(std::time(nullptr));
-    bodies.push_back({1e24, 0, 0, 0, 0}); // central massive body
+    std::mt19937_64 rng(std::time(nullptr));
+    std::uniform_real_distribution<double> log_mass_dist(2, 24);
+    std::uniform_real_distribution<double> pos_dist(-30e10, 30e10);
+    std::uniform_real_distribution<double> vel_dist(-100, 100);
+    bodies.push_back({1e25, 0, 0, 0, 0, "white", std::log(1e25)/10}); // central massive body
     for (int i = 1; i < N; ++i) {
-        double mass = 1e2 + static_cast<double>(std::rand()) / (static_cast<double>(RAND_MAX / (1e24 - 1e2)));
-        double x = -5e10 + static_cast<double>(std::rand()) / (static_cast<double>(RAND_MAX / (5e10 - (-5e10))));
-        double y = -5e10 + static_cast<double>(std::rand()) / (static_cast<double>(RAND_MAX / (5e10 - (-5e10))));
-        double vx = -100 + static_cast<double>(std::rand()) / (static_cast<double>(RAND_MAX / (100 - (-100))));
-        double vy = -100 + static_cast<double>(std::rand()) / (static_cast<double>(RAND_MAX / (100 - (-100))));
-        bodies.push_back({mass, x, y, vx, vy});
+        double exponent = log_mass_dist(rng);
+        double mass = std::pow(10, exponent);
+        double x = pos_dist(rng);
+        double y = pos_dist(rng);
+        double vx = vel_dist(rng);
+        double vy = vel_dist(rng);
+        bodies.push_back({mass, x, y, vx, vy, generate_random_color(), std::log(mass)/10});
     }
     return bodies;
+}
+
+Magick::Image drawFrame(const std::vector<Body>& bodies) {
+    Magick::Image image(Magick::Geometry(800, 600), "black");
+    image.type(Magick::TrueColorType);
+
+    for (const Body& body : bodies) {
+        double x = body.x / 1e9 + 400;
+        double y = body.y / 1e9 + 300;
+        image.strokeColor(body.color);
+        image.fillColor(body.color);
+        image.draw(Magick::DrawableCircle(x, y, x + body.radius, y + body.radius));
+    }
+    return image;
 }
 
 int main(int argc, char *argv[]) {
@@ -403,6 +419,13 @@ int main(int argc, char *argv[]) {
             for (int algoTest = 1; algoTest <= 5; ++algoTest) {
                 std::vector<Body> bodiesCopy = bodies;
                 auto start_total = std::chrono::high_resolution_clock::now();
+                double minX = -1e12, minY = -1e12, maxX = 1e12, maxY = 1e12;
+                QuadNode root(minX, minY, maxX, maxY);
+                if (algoTest == 5){
+                    for (auto& body : bodies) {
+                        root.insert(&body);
+                    }
+                }
                 for (int step = 0; step < steps; ++step) {
                     if (algoTest == 1) {
                         sequential_simulation(bodiesCopy, dt);
@@ -414,7 +437,7 @@ int main(int argc, char *argv[]) {
                         parallel_combined_simulation(bodiesCopy, dt, numThreads);
                     }
                     else if (algo == 5) {
-                        barnes_hutt_simulation(bodiesCopy, dt);
+                        barnes_hutt_simulation(bodiesCopy, root, dt);
                     }
                 }
                 auto end_total = std::chrono::high_resolution_clock::now();
@@ -442,15 +465,27 @@ int main(int argc, char *argv[]) {
         //     {1e2, -5e10, 5e10, 10, -20}
         // };
 
-        std::vector<Body> bodies = generate_random_bodies(1);
+        // std::vector<Body> bodies = {
+        //     {1e24, 0, 0, 0, 0, "white", std::log(1e24)/10}, // mass, x, y, vx, vy, color, radius 
+        //     {1e2, 5e10, 0, 10, 0, "red", std::log(1e2)/10}
+        // };
+
+        std::vector<Body> bodies = generate_random_bodies(100000);
 
         double dt = 1e7;  // time step in seconds
-        int steps = 200;  // total number of steps
+        int steps = 1;  // total number of steps
 
         int numThreads = std::thread::hardware_concurrency();
 
         std::vector<Magick::Image> frames;
 
+        double minX = -1e12, minY = -1e12, maxX = 1e12, maxY = 1e12;
+        QuadNode root(minX, minY, maxX, maxY);
+        if (algo == 5){
+                    for (auto& body : bodies) {
+                        root.insert(&body);
+                    }
+                }
         auto start_total = std::chrono::high_resolution_clock::now();
         for (int step = 0; step < steps; ++step) {
             if (algo == 1) {
@@ -465,7 +500,7 @@ int main(int argc, char *argv[]) {
                 parallel_combined_simulation(bodies, dt, numThreads);
             }
             else if (algo == 5) {
-                barnes_hutt_simulation(bodies, dt);
+                barnes_hutt_simulation(bodies, root, dt);
             }
             frames.push_back(drawFrame(bodies));
         }
