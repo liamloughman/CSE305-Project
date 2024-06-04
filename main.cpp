@@ -223,8 +223,6 @@ void parallel_combined_simulation(std::vector<Body>& bodies, double dt, int numT
     }
 }
 
-
-
 //--------------------------------BARNES-HUTT------------------------------------------------------
 
 struct QuadNode {
@@ -383,6 +381,38 @@ std::vector<Body> generate_random_bodies(int N) {
     return bodies;
 }
 
+void handle_collisions(std::vector<Body>& bodies) {
+    for (size_t i = 0; i < bodies.size(); ++i) {
+        for (size_t j = i + 1; j < bodies.size(); ++j) {
+            double dx = bodies[j].x - bodies[i].x;
+            double dy = bodies[j].y - bodies[i].y;
+            double distance = std::sqrt(dx * dx + dy * dy);
+            double combinedRadius = bodies[i].radius + bodies[j].radius;
+
+            if (distance < combinedRadius * 1.567e9) {
+                double nx = dx / distance;
+                double ny = dy / distance;
+                double dvx = bodies[j].vx - bodies[i].vx;
+                double dvy = bodies[j].vy - bodies[i].vy;
+                double relativeVelocity = dvx * nx + dvy * ny;
+
+                if (relativeVelocity < 0) {
+                    double impulse = -2 * relativeVelocity / (1 / bodies[i].mass + 1 / bodies[j].mass);
+                    bodies[i].vx -= impulse / bodies[i].mass * nx;
+                    bodies[i].vy -= impulse / bodies[i].mass * ny;
+                    bodies[j].vx += impulse / bodies[j].mass * nx;
+                    bodies[j].vy += impulse / bodies[j].mass * ny;
+                    double overlap = (combinedRadius * 1.567e9 - distance) / 2.0;
+                    bodies[i].x -= overlap * nx;
+                    bodies[i].y -= overlap * ny;
+                    bodies[j].x += overlap * nx;
+                    bodies[j].y += overlap * ny;
+                }
+            }
+        }
+    }
+}
+
 Magick::Image drawFrame(const std::vector<Body>& bodies) {
     Magick::Image image(Magick::Geometry(800, 600), "black");
     image.type(Magick::TrueColorType);
@@ -397,6 +427,7 @@ Magick::Image drawFrame(const std::vector<Body>& bodies) {
     return image;
 }
 
+
 int main(int argc, char *argv[]) {
     if (argc != 2) {
         std::cerr << "Usage: " << argv[0] << " <1 for sequential_simulation, 2 for parallel_step_simulation, 3 for parallel_distinc_simulation, 4 for parallel_combined_simulation, >" << std::endl;
@@ -410,14 +441,13 @@ int main(int argc, char *argv[]) {
     }
 
     if (algo == 0) {
-        int N = 1000;
+        int N = 10000;
         double dt = 1e7;  // time step in seconds
         int steps = 1;  // total number of steps
         std::vector<Body> bodies = generate_random_bodies(N);
         nlohmann::json results = nlohmann::json::array();
         for (int numThreads = 1; numThreads <= std::thread::hardware_concurrency(); ++numThreads) {
-            for (int algoTest = 1; algoTest <= 5; ++algoTest) {
-                std::vector<Body> bodiesCopy = bodies;
+            for (int algoTest = 1; algoTest <= 5; ++algoTest) {std::vector<Body> bodiesCopy = bodies;
                 auto start_total = std::chrono::high_resolution_clock::now();
                 double minX = -1e12, minY = -1e12, maxX = 1e12, maxY = 1e12;
                 QuadNode root(minX, minY, maxX, maxY);
@@ -436,7 +466,7 @@ int main(int argc, char *argv[]) {
                     } else if (algoTest == 4) {
                         parallel_combined_simulation(bodiesCopy, dt, numThreads);
                     }
-                    else if (algo == 5) {
+                    else if (algoTest == 5) {
                         barnes_hutt_simulation(bodiesCopy, root, dt);
                     }
                 }
@@ -470,7 +500,7 @@ int main(int argc, char *argv[]) {
         //     {1e2, 5e10, 0, 10, 0, "red", std::log(1e2)/10}
         // };
 
-        std::vector<Body> bodies = generate_random_bodies(100000);
+        std::vector<Body> bodies = generate_random_bodies(10000);
 
         double dt = 1e7;  // time step in seconds
         int steps = 1;  // total number of steps
@@ -482,10 +512,11 @@ int main(int argc, char *argv[]) {
         double minX = -1e12, minY = -1e12, maxX = 1e12, maxY = 1e12;
         QuadNode root(minX, minY, maxX, maxY);
         if (algo == 5){
-                    for (auto& body : bodies) {
-                        root.insert(&body);
-                    }
-                }
+            for (auto& body : bodies) {
+                root.insert(&body);
+            }
+        }
+
         auto start_total = std::chrono::high_resolution_clock::now();
         for (int step = 0; step < steps; ++step) {
             if (algo == 1) {
@@ -502,6 +533,7 @@ int main(int argc, char *argv[]) {
             else if (algo == 5) {
                 barnes_hutt_simulation(bodies, root, dt);
             }
+            handle_collisions(bodies);
             frames.push_back(drawFrame(bodies));
         }
         
