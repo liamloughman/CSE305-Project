@@ -25,7 +25,7 @@ struct Body {
 
 std::mutex mutex;
 
-void compute_forces(std::vector<Body>& bodies, std::vector<double>& fx, std::vector<double>& fy) {
+void compute_forces_not_optimized_naive(std::vector<Body>& bodies, std::vector<double>& fx, std::vector<double>& fy) {
     int n = bodies.size();
     for (int i = 0; i < n; ++i) {
         fx[i] = 0;
@@ -41,11 +41,33 @@ void compute_forces(std::vector<Body>& bodies, std::vector<double>& fx, std::vec
                 double fy_i = force * dy / dist;
                 fx[i] += fx_i;
                 fy[i] += fy_i;
-                fx[j] -= fx_i;
-                fy[j] -= fy_i;}
+            }
         }
     }
+}
 
+void compute_forces(std::vector<Body>& bodies, std::vector<double>& fx, std::vector<double>& fy) {
+    int n = bodies.size();
+    for (int i = 0; i < n; ++i) {
+        fx[i] = 0;
+        fy[i] = 0;
+    }
+
+    for (int i = 0; i < n; ++i) {
+        for (int j = i + 1; j < n; ++j) {
+            double dx = bodies[j].x - bodies[i].x;
+            double dy = bodies[j].y - bodies[i].y;
+            double distSq = dx * dx + dy * dy;
+            double dist = std::sqrt(distSq);
+            double force = G * bodies[i].mass * bodies[j].mass / distSq;
+            double fx_i = force * dx / dist;
+            double fy_i = force * dy / dist;
+            fx[i] += fx_i;
+            fy[i] += fy_i;
+            fx[j] -= fx_i;
+            fy[j] -= fy_i;
+        }
+    }
 }
 
 void sequential_simulation(std::vector<Body>& bodies, double dt) {
@@ -61,7 +83,7 @@ void sequential_simulation(std::vector<Body>& bodies, double dt) {
     }
 }
 
-//--------------------------------PARALLEL------------------------------------------------------
+//--------------------------------PARALLEL STEP------------------------------------------------------
 
 void compute_velocities(std::vector<Body>& bodies, double dt, std::vector<double>& fx, std::vector<double>& fy, int start, int end) {
     for (int i = start; i < end; ++i) {
@@ -110,6 +132,8 @@ void parallel_step_simulation(std::vector<Body>& bodies, double dt, int numThrea
     }
 }
 
+//--------------------------------PARALLEL FORCES------------------------------------------------------
+
 void compute_forces_parallel(std::vector<Body>& bodies, std::vector<double>& fx, std::vector<double>& fy, int start, int end) {
     int n = bodies.size();
     for (int i = start; i < end; ++i) {
@@ -125,18 +149,14 @@ void compute_forces_parallel(std::vector<Body>& bodies, std::vector<double>& fx,
                 double fx_i = force * dx / dist;
                 double fy_i = force * dy / dist;
 
-                mutex.lock();
                 fx[i] += fx_i;
                 fy[i] += fy_i;
-                fx[j] -= fx_i;
-                fy[j] -= fy_i;
-                mutex.unlock();
             }
         }
     }
 }
 
-void parallel_distinc_simulation(std::vector<Body>& bodies, double dt, int numThreads) {
+void parallel_forces_simulation(std::vector<Body>& bodies, double dt, int numThreads) {
     int n = bodies.size();
     std::vector<double> fx(n, 0), fy(n, 0);
 
@@ -152,26 +172,15 @@ void parallel_distinc_simulation(std::vector<Body>& bodies, double dt, int numTh
     }
     threads.clear();
 
-    for (int i = 0; i < numThreads; ++i) {
-        int start = i * n / numThreads;
-        int end = (i + 1) * n / numThreads;
-        threads.push_back(std::thread(compute_velocities, std::ref(bodies), dt, std::ref(fx), std::ref(fy), start, end));
+    for (int i = 0; i < n; ++i) {
+        bodies[i].vx += fx[i] / bodies[i].mass * dt;
+        bodies[i].vy += fy[i] / bodies[i].mass * dt;
+        bodies[i].x += bodies[i].vx * dt;
+        bodies[i].y += bodies[i].vy * dt;
     }
-    for (auto& thread : threads) {
-        thread.join();
-    }
-    threads.clear();
-
-    for (int i = 0; i < numThreads; ++i) {
-        int start = i * n / numThreads;
-        int end = (i + 1) * n / numThreads;
-        threads.push_back(std::thread(compute_positions, std::ref(bodies), dt, start, end));
-    }
-    for (auto& thread : threads) {
-        thread.join();
-    }
-    threads.clear();
 }
+
+//--------------------------------PARALLEL COMBINED------------------------------------------------------
 
 void parallel_combined_aux(std::vector<Body>& bodies, std::vector<Body>& curr, std::vector<Body>& next, size_t start, size_t end, double dt) {
     size_t n = bodies.size();
@@ -351,6 +360,8 @@ void barnes_hutt_simulation(std::vector<Body>& bodies, QuadNode& root, double dt
     }
 }
 
+//--------------------------------GENERATE RANDOM------------------------------------------------------
+
 std::string generate_random_color() {
     std::ostringstream color;
     color << "#";
@@ -380,6 +391,8 @@ std::vector<Body> generate_random_bodies(int N) {
     }
     return bodies;
 }
+
+//--------------------------------COLLISION------------------------------------------------------
 
 void handle_collisions(std::vector<Body>& bodies) {
     for (size_t i = 0; i < bodies.size(); ++i) {
@@ -413,6 +426,8 @@ void handle_collisions(std::vector<Body>& bodies) {
     }
 }
 
+//--------------------------------DRAW FRAME------------------------------------------------------
+
 Magick::Image drawFrame(const std::vector<Body>& bodies) {
     Magick::Image image(Magick::Geometry(800, 600), "black");
     image.type(Magick::TrueColorType);
@@ -427,16 +442,23 @@ Magick::Image drawFrame(const std::vector<Body>& bodies) {
     return image;
 }
 
+//--------------------------------MAIN------------------------------------------------------
 
 int main(int argc, char *argv[]) {
-    if (argc != 2) {
-        std::cerr << "Usage: " << argv[0] << " <1 for sequential_simulation, 2 for parallel_step_simulation, 3 for parallel_distinc_simulation, 4 for parallel_combined_simulation, >" << std::endl;
+    if (argc != 3) {
+        std::cerr << "Usage: " << argv[0] << " <1 for sequential_simulation, 2 for parallel_step_simulation, 3 for parallel_distinc_simulation, 4 for parallel_combined_simulation, 5 for barnes_hutt_simulation>, and <0 for no collision and 1 for collision> " << std::endl;
         return 1;
     }
 
     int algo = std::atoi(argv[1]);
-    if (algo != 0 && algo != 1 && algo != 2 && algo != 3 && algo != 4 && algo != 5) {
+    if (algo != -1 && algo != 0 && algo != 1 && algo != 2 && algo != 3 && algo != 4 && algo != 5) {
         std::cerr << "Invalid option. Use 1 for sequential_simulation, 2 for parallel_step_simulation, 3 for parallel_distinc_simulation, 4 for parallel_combined_simulation, 5 for barnes_hutt_simulation." << std::endl;
+        return 1;
+    }
+
+    int collision = std::atoi(argv[2]);
+    if (collision != 1 && collision != 0) {
+        std::cerr << "Invalid option. Use 1 for collision and 0 for no collision in the simulation." << std::endl;
         return 1;
     }
 
@@ -462,12 +484,15 @@ int main(int argc, char *argv[]) {
                     } else if (algoTest == 2) {
                         parallel_step_simulation(bodiesCopy, dt, numThreads);
                     } else if (algoTest == 3) {
-                        parallel_distinc_simulation(bodiesCopy, dt, numThreads);
+                        parallel_forces_simulation(bodiesCopy, dt, numThreads);
                     } else if (algoTest == 4) {
                         parallel_combined_simulation(bodiesCopy, dt, numThreads);
                     }
                     else if (algoTest == 5) {
                         barnes_hutt_simulation(bodiesCopy, root, dt);
+                    }
+                    if (collision == 1) {
+                        handle_collisions(bodies);
                     }
                 }
                 auto end_total = std::chrono::high_resolution_clock::now();
@@ -488,22 +513,73 @@ int main(int argc, char *argv[]) {
         return 0;
 
     }
+    else if (algo == -1) {
+        double dt = 1e7;   // time step in seconds
+        int steps = 1000;   // total number of steps
+
+        std::vector<Body> bodies = generate_random_bodies(31);
+
+        nlohmann::json results = nlohmann::json::array();
+        for (int algo = 1; algo <= 4; ++algo) {
+            std::vector<Body> bodiesCopy = bodies;
+            nlohmann::json algoResults;
+            algoResults["algorithm"] = algo;
+
+            QuadNode root(-1e12, -1e12, 2e12, 2e12);
+            if (algo == 5) {
+                for (auto& body : bodiesCopy) {
+                    root.insert(&body);
+                }
+            }
+
+            for (int step = 0; step < steps; ++step) {
+                if (algo == 1) {
+                    sequential_simulation(bodiesCopy, dt);
+                }
+                else if (algo == 2) {
+                    parallel_step_simulation(bodiesCopy, dt, std::thread::hardware_concurrency());
+                }
+                else if (algo == 3) {
+                    parallel_forces_simulation(bodiesCopy, dt, std::thread::hardware_concurrency());
+                }
+                else if (algo == 4) {
+                    parallel_combined_simulation(bodiesCopy, dt, std::thread::hardware_concurrency());
+                }
+                else if (algo == 5) {
+                    barnes_hutt_simulation(bodiesCopy, root, dt);
+                }
+                if (collision == 1) {
+                    handle_collisions(bodies);
+                }
+                for (size_t idx = 0; idx < bodiesCopy.size(); ++idx) {
+                    algoResults["body" + std::to_string(idx)].push_back({{"x", bodiesCopy[idx].x}, {"y", bodiesCopy[idx].y}});
+                }
+            }
+            results.push_back(algoResults);
+        }
+
+        std::ofstream file("trajectory_results.json");
+        file << results.dump(4);
+        file.close();
+    }
     else{
-        // std::vector<Body> bodies = {
-        //     {1e24, 0, 0, 0, 0}, // mass, x, y, vx, vy
-        //     {1e2, 5e10, 1e10, -70, 60},
-        //     {1e2, -5e10, 5e10, 10, -20}
-        // };
+        std::vector<Body> bodies = {
+            {1.989e30, 0, 0, 0, 0, "yellow", std::log(1.989e30)/10}, // mass, x, y, vx, vy, random color, radius (we define it as log(mass)/10)
+            {3.285e23, 7e10, 0, 0, -42000, "#B7B8B9", std::log(3.285e23)/10},
+            {4.867e24, -11e10, 0, 0, 36000, "#928590", std::log(4.867e24)/10},
+            {5.972e24, 16e10, 0, 0, -29000, "#6b93d6", std::log(5.972e24)/10},
+            {6.39e23, -23e10, 0, 0, 24000, "#c1440e", std::log(5.972e24)/10}
+        };
 
         // std::vector<Body> bodies = {
         //     {1e24, 0, 0, 0, 0, "white", std::log(1e24)/10}, // mass, x, y, vx, vy, color, radius 
         //     {1e2, 5e10, 0, 10, 0, "red", std::log(1e2)/10}
         // };
 
-        std::vector<Body> bodies = generate_random_bodies(10000);
+        // std::vector<Body> bodies = generate_random_bodies(100);
 
-        double dt = 1e7;  // time step in seconds
-        int steps = 1;  // total number of steps
+        double dt = 5e4;  // time step in seconds
+        int steps = 1000;  // total number of steps
 
         int numThreads = std::thread::hardware_concurrency();
 
@@ -525,7 +601,7 @@ int main(int argc, char *argv[]) {
                 parallel_step_simulation(bodies, dt, numThreads);
             }
             else if (algo == 3) {
-                parallel_distinc_simulation(bodies, dt, numThreads);
+                parallel_forces_simulation(bodies, dt, numThreads);
             }
             else if (algo == 4) {
                 parallel_combined_simulation(bodies, dt, numThreads);
@@ -533,7 +609,9 @@ int main(int argc, char *argv[]) {
             else if (algo == 5) {
                 barnes_hutt_simulation(bodies, root, dt);
             }
-            handle_collisions(bodies);
+            if (collision == 1) {
+                handle_collisions(bodies);
+            }
             frames.push_back(drawFrame(bodies));
         }
         

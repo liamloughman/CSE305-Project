@@ -23,7 +23,7 @@ def plot_all_results(directory):
                 plt.plot(threads, times, label=f'{algorithm_names[algorithm]}')
             plt.xlabel('Number of Threads')
             plt.ylabel('Time (seconds)')
-            plt.title(f'Performance of Algorithms by Thread Count for results{n}.json')
+            plt.title(f'Performance of Algorithms for {n} bodies.')
             plt.legend()
             plt.grid(True)
             plt.savefig(os.path.join(directory, f'plot_results{n}.png'))
