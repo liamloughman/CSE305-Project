@@ -11,7 +11,7 @@
 #include <ctime>
 
 const double G = 6.67430e-11;
-const double THETA = 0.5;
+double THETA = 0.5;
 
 struct Body {
     double mass;
@@ -25,7 +25,7 @@ struct Body {
 
 std::mutex mutex;
 
-void compute_forces_not_optimized_naive(std::vector<Body>& bodies, std::vector<double>& fx, std::vector<double>& fy) {
+void compute_forces(std::vector<Body>& bodies, std::vector<double>& fx, std::vector<double>& fy) {
     int n = bodies.size();
     for (int i = 0; i < n; ++i) {
         fx[i] = 0;
@@ -46,7 +46,7 @@ void compute_forces_not_optimized_naive(std::vector<Body>& bodies, std::vector<d
     }
 }
 
-void compute_forces(std::vector<Body>& bodies, std::vector<double>& fx, std::vector<double>& fy) {
+void compute_forces_not_optimized_naive(std::vector<Body>& bodies, std::vector<double>& fx, std::vector<double>& fy) {
     int n = bodies.size();
     for (int i = 0; i < n; ++i) {
         fx[i] = 0;
@@ -451,7 +451,7 @@ int main(int argc, char *argv[]) {
     }
 
     int algo = std::atoi(argv[1]);
-    if (algo != -1 && algo != 0 && algo != 1 && algo != 2 && algo != 3 && algo != 4 && algo != 5) {
+    if (algo != -2 && algo != -1 && algo != 0 && algo != 1 && algo != 2 && algo != 3 && algo != 4 && algo != 5) {
         std::cerr << "Invalid option. Use 1 for sequential_simulation, 2 for parallel_step_simulation, 3 for parallel_distinc_simulation, 4 for parallel_combined_simulation, 5 for barnes_hutt_simulation." << std::endl;
         return 1;
     }
@@ -461,15 +461,79 @@ int main(int argc, char *argv[]) {
         std::cerr << "Invalid option. Use 1 for collision and 0 for no collision in the simulation." << std::endl;
         return 1;
     }
+    if (algo == -2) {
 
-    if (algo == 0) {
-        int N = 10000;
+        int N = 50;
+
+        int steps = 1000;
+        double dt = 1e7;
+        std::vector<Body> original_bodies = generate_random_bodies(N);
+        std::vector<double> theta_values = {0.1, 0.3, 0.5, 0.7, 0.9};
+
+        nlohmann::json results = nlohmann::json::array();
+
+        for (double theta : theta_values) {
+            std::cout<<theta<<std::endl;
+            THETA = theta;
+            std::vector<Body> sequential_bodies = original_bodies;
+            std::vector<Body> barnes_hutt_bodies = original_bodies;
+
+            nlohmann::json sequential_result;
+            sequential_result["theta"] = theta;
+            sequential_result["trajectory"] = nlohmann::json::array();
+
+            auto start_sequential = std::chrono::high_resolution_clock::now();
+            for (int step = 0; step < steps; ++step) {
+                parallel_combined_simulation(sequential_bodies, dt, std::thread::hardware_concurrency());
+            }
+            for (size_t idx = 0; idx < sequential_bodies.size(); ++idx) {
+                sequential_result["trajectory"].push_back({{"x", sequential_bodies[idx].x}, {"y", sequential_bodies[idx].y}});
+            }
+            auto end_sequential = std::chrono::high_resolution_clock::now();
+            std::chrono::duration<double> total_duration_sequential = end_sequential - start_sequential;
+            sequential_result["algorithm"] = "parallel_combined_simulation";
+            sequential_result["time"] = total_duration_sequential.count();
+            results.push_back(sequential_result);
+
+            nlohmann::json barnes_hutt_result;
+            barnes_hutt_result["theta"] = theta;
+            barnes_hutt_result["trajectory"] = nlohmann::json::array();
+
+            auto start_barnes_hutt = std::chrono::high_resolution_clock::now();
+            for (int step = 0; step < steps; ++step) {
+                QuadNode root(-1e12, -1e12, 2e12, 2e12);
+                for (auto& body : barnes_hutt_bodies) {
+                    root.insert(&body);
+                }
+                barnes_hutt_simulation(barnes_hutt_bodies, root, dt);
+            }
+            for (size_t idx = 0; idx < barnes_hutt_bodies.size(); ++idx) {
+                barnes_hutt_result["trajectory"].push_back({{"x", barnes_hutt_bodies[idx].x}, {"y", barnes_hutt_bodies[idx].y}});
+            }
+            auto end_barnes_hutt = std::chrono::high_resolution_clock::now();
+            std::chrono::duration<double> total_duration_barnes_hutt = end_barnes_hutt - start_barnes_hutt;
+            barnes_hutt_result["algorithm"] = "barnes_hutt_simulation";
+            barnes_hutt_result["time"] = total_duration_barnes_hutt.count();
+            results.push_back(barnes_hutt_result);
+
+        }
+
+        std::ofstream file("simulation_accuracy_results.json");
+        file << results.dump(4);
+        file.close();
+
+
+    }
+    else if (algo == 0) {
+        int N = 100000;
         double dt = 1e7;  // time step in seconds
         int steps = 1;  // total number of steps
         std::vector<Body> bodies = generate_random_bodies(N);
         nlohmann::json results = nlohmann::json::array();
         for (int numThreads = 1; numThreads <= std::thread::hardware_concurrency(); ++numThreads) {
+            std::cout<<"numThreads: " << numThreads <<std::endl;
             for (int algoTest = 1; algoTest <= 5; ++algoTest) {std::vector<Body> bodiesCopy = bodies;
+                std::cout<<" algo: " << algoTest <<std::endl;
                 auto start_total = std::chrono::high_resolution_clock::now();
                 double minX = -1e12, minY = -1e12, maxX = 1e12, maxY = 1e12;
                 QuadNode root(minX, minY, maxX, maxY);
@@ -498,6 +562,8 @@ int main(int argc, char *argv[]) {
                 auto end_total = std::chrono::high_resolution_clock::now();
                 std::chrono::duration<double> total_duration = end_total - start_total;
 
+                std::cout<<"numThreads: " << numThreads <<" algo: " << algoTest <<" time" << total_duration.count() <<std::endl;
+
                 nlohmann::json result;
                 result["algorithm"] = algoTest;
                 result["threads"] = numThreads;
@@ -517,10 +583,10 @@ int main(int argc, char *argv[]) {
         double dt = 1e7;   // time step in seconds
         int steps = 1000;   // total number of steps
 
-        std::vector<Body> bodies = generate_random_bodies(31);
+        std::vector<Body> bodies = generate_random_bodies(50);
 
         nlohmann::json results = nlohmann::json::array();
-        for (int algo = 1; algo <= 4; ++algo) {
+        for (int algo = 1; algo <= 5; ++algo) {
             std::vector<Body> bodiesCopy = bodies;
             nlohmann::json algoResults;
             algoResults["algorithm"] = algo;
