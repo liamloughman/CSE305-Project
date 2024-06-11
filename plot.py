@@ -6,12 +6,14 @@ def plot_all_results(directory):
     algorithm_names = {
         1: "sequential_simulation",
         2: "parallel_step_simulation",
-        3: "parallel_distinc_simulation",
+        3: "compute_forces_parallel",
         4: "parallel_combined_simulation",
         5: "barnes_hutt_simulation"
     }
+
+    list_i = [1, 10, 100, 1000, 10000, 100000]
     
-    for n in range(1, 1001):
+    for n in list_i:
         file_path = os.path.join(directory, f"results{n}.json")
         if os.path.exists(file_path):
             df = pd.read_json(file_path)
@@ -23,7 +25,7 @@ def plot_all_results(directory):
                 plt.plot(threads, times, label=f'{algorithm_names[algorithm]}')
             plt.xlabel('Number of Threads')
             plt.ylabel('Time (seconds)')
-            plt.title(f'Performance of Algorithms by Thread Count for results{n}.json')
+            plt.title(f'Performance of Algorithms for {n} bodies.')
             plt.legend()
             plt.grid(True)
             plt.savefig(os.path.join(directory, f'plot_results{n}.png'))
